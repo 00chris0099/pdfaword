@@ -29,7 +29,7 @@ def convert_pdf_to_docx(pdf_path: str, docx_path: str) -> None:
         cv = Converter(pdf_path)
 
         settings = {
-            "ocr": 1,
+            "ocr": 0,
             "ignore_page_error": True,
             "parse_lattice_table": True,
             "parse_stream_table": True,
