@@ -1,0 +1,289 @@
+{
+  "name": "PDF to Word - PDFForge",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "convert-pdf",
+        "options": {
+          "rawBody": false
+        },
+        "responseMode": "responseNode"
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "convert-pdf-webhook"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json.env.PDFFORGE_URL || 'http://localhost:8000'}}/api/auth/login",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"email\": \"{{$env.PDFFORGE_EMAIL || 'admin@pdfforge.com'}}\", \"password\": \"{{$env.PDFFORGE_PASSWORD || 'admin123'}}\"}",
+        "options": {}
+      },
+      "id": "get-token",
+      "name": "Get Auth Token",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "token-check",
+              "leftValue": "={{$json.access_token}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-token",
+      "name": "Token OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.PDFFORGE_URL || 'http://localhost:8000'}}/api/convert",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $('Get Auth Token').item.json.access_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "convert-pdf",
+      "name": "Convert PDF to Word",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, -100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "conversion-check",
+              "leftValue": "={{$json.conversion_id}}",
+              "rightValue": "",
+              "operator": {
+                "type": "number",
+                "operation": "gt",
+                "value": 0
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-conversion",
+      "name": "Conversion OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, -100]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.PDFFORGE_URL || 'http://localhost:8000'}}/api/convert/{{ $('Convert PDF to Word').item.json.conversion_id }}/download",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-file",
+      "name": "Download Word File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, -100]
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond with Word File",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1500, -100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"error\": \"Authentication failed\", \"detail\": \"Check PDFFORGE_EMAIL and PDFFORGE_PASSWORD env vars\"}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-auth-error",
+      "name": "Auth Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [750, 150]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"error\": \"Conversion failed\", \"detail\": \"{{ $('Convert PDF to Word').item.json.detail || 'Unknown error' }}\"}",
+        "options": {
+          "responseCode": 500
+        }
+      },
+      "id": "respond-convert-error",
+      "name": "Conversion Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1250, 150]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get Auth Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Auth Token": {
+      "main": [
+        [
+          {
+            "node": "Token OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Token OK?": {
+      "main": [
+        [
+          {
+            "node": "Convert PDF to Word",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Auth Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert PDF to Word": {
+      "main": [
+        [
+          {
+            "node": "Conversion OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversion OK?": {
+      "main": [
+        [
+          {
+            "node": "Download Word File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Conversion Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Word File": {
+      "main": [
+        [
+          {
+            "node": "Respond with Word File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "pdf",
+      "id": "1"
+    },
+    {
+      "name": "conversion",
+      "id": "2"
+    }
+  ]
+}
