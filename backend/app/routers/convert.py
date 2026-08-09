@@ -375,9 +375,12 @@ async def convert_html_to_docx(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    safe_filename = (data.filename or "documento")[:50]
+    safe_filename = "".join(c for c in safe_filename if c.isalnum() or c in "-_ ").strip() or "documento"
+
     conversion = Conversion(
         user_id=user.id,
-        original_filename=f"{data.filename}.html",
+        original_filename=f"{safe_filename}.html",
         original_size=len(data.html.encode("utf-8")),
         status=ConversionStatus.PENDING,
         file_path_pdf="",
@@ -390,7 +393,7 @@ async def convert_html_to_docx(
     html_path = settings.UPLOAD_DIR / f"{conversion.id}_{uuid.uuid4().hex[:8]}.html"
     html_path.write_text(data.html, encoding="utf-8")
 
-    output_filename = f"{data.filename}.docx"
+    output_filename = f"{safe_filename}.docx"
     output_path = settings.OUTPUT_DIR / output_filename
 
     try:
