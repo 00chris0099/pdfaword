@@ -40,6 +40,8 @@ def convert_pdf_to_docx(pdf_path: str, docx_path: str) -> None:
             "float_image_ignorable_gap": 5.0,
             "line_break_width_ratio": 0.5,
             "new_paragraph_free_space_ratio": 0.85,
+            "page_margin_factor_top": 0.0,
+            "page_margin_factor_bottom": 0.0,
         }
 
         cv.convert(docx_path, **settings)

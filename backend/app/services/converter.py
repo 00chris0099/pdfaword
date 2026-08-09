@@ -14,8 +14,8 @@ from app.services.translator import translate_docx
 logger = logging.getLogger("pdfforge.converter")
 
 
-def _append_footers_to_docx(docx_path: str, pdf_path: str) -> None:
-    """Extract footers from PDF and append to DOCX if missing."""
+def _append_headers_footers_to_docx(docx_path: str, pdf_path: str) -> None:
+    """Extract headers and footers from PDF and append to DOCX if missing."""
     try:
         import pymupdf
         from docx import Document
@@ -29,25 +29,46 @@ def _append_footers_to_docx(docx_path: str, pdf_path: str) -> None:
         for page_num in range(len(pdf_doc)):
             page = pdf_doc[page_num]
             page_height = page.rect.height
+            page_width = page.rect.width
 
-            footer_area = pymupdf.Rect(0, page_height * 0.88, page.rect.width, page_height)
+            # Header: top 10% of page
+            header_area = pymupdf.Rect(0, 0, page_width, page_height * 0.10)
+            header_text = page.get_text("text", clip=header_area).strip()
+
+            # Footer: bottom 12% of page
+            footer_area = pymupdf.Rect(0, page_height * 0.88, page_width, page_height)
             footer_text = page.get_text("text", clip=footer_area).strip()
 
-            if footer_text and footer_text not in existing_text:
-                for line in footer_text.split("\n"):
-                    if line.strip() and line.strip() not in existing_text:
+            # Add header if not in existing text
+            if header_text:
+                for line in header_text.split("\n"):
+                    line = line.strip()
+                    if line and line not in existing_text:
                         p = doc.add_paragraph()
                         p.alignment = 1  # center
-                        run = p.add_run(line.strip())
+                        run = p.add_run(line)
+                        run.font.size = Pt(9)
+                        run.font.color.rgb = RGBColor(100, 100, 100)
+                        existing_text += "\n" + line
+
+            # Add footer if not in existing text
+            if footer_text:
+                for line in footer_text.split("\n"):
+                    line = line.strip()
+                    if line and line not in existing_text:
+                        p = doc.add_paragraph()
+                        p.alignment = 1  # center
+                        run = p.add_run(line)
                         run.font.size = Pt(8)
                         run.font.color.rgb = RGBColor(128, 128, 128)
+                        existing_text += "\n" + line
 
         doc.save(docx_path)
         pdf_doc.close()
-        logger.info(f"Appended footers to {docx_path}")
+        logger.info(f"Appended headers/footers to {docx_path}")
 
     except Exception as e:
-        logger.warning(f"Footer extraction failed: {e}")
+        logger.warning(f"Header/footer extraction failed: {e}")
 
 
 async def run_conversion(conversion_id: int, force_ocr: bool = False):
@@ -101,8 +122,8 @@ async def run_conversion(conversion_id: int, force_ocr: bool = False):
                 logger.info(f"Conversion {conversion_id}: pdf2docx conversion")
                 convert_pdf_to_docx(str(pdf_path), str(output_path))
 
-                # Post-process: append missing footers
-                _append_footers_to_docx(str(output_path), str(pdf_path))
+                # Post-process: append missing headers and footers
+                _append_headers_footers_to_docx(str(output_path), str(pdf_path))
 
             # Step 3: Translation (optional)
             if conversion.translation_lang:
