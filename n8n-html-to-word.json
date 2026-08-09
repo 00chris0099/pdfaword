@@ -1,0 +1,110 @@
+{
+  "name": "HTML to Word - PDFForge",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "convert-html",
+        "options": {},
+        "responseMode": "lastNode"
+      },
+      "id": "1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "convert-html"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://aimachristian-pdf.ajcxjb.easypanel.host/api/convert/html",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_TOKEN_AQUI"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "html",
+              "value": "={{ $json.html || $json.body?.html || $json.data }}"
+            },
+            {
+              "name": "filename",
+              "value": "={{ $json.filename || $json.body?.filename || 'documento' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "2",
+      "name": "Convert HTML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 0]
+    },
+    {
+      "parameters": {
+        "url": "=https://aimachristian-pdf.ajcxjb.easypanel.host/api/convert/{{ $json.id }}/download",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer TU_TOKEN_AQUI"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "id": "3",
+      "name": "Download Word",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 0]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Convert HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert HTML": {
+      "main": [
+        [
+          {
+            "node": "Download Word",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

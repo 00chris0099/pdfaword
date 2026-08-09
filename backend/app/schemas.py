@@ -122,3 +122,17 @@ class ErrorResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     version: str
+
+
+# ── HTML to DOCX ─────────────────────────────────────
+
+class HTMLConvertRequest(BaseModel):
+    html: str = Field(min_length=1)
+    filename: str = Field(default="documento")
+
+
+class HTMLConvertResponse(BaseModel):
+    id: int
+    message: str
+    status: ConversionStatus
+    original_filename: str

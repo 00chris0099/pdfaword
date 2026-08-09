@@ -3,9 +3,10 @@ import time
 import uuid
 import shutil
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
@@ -18,6 +19,8 @@ from app.schemas import (
     BatchItemResponse,
     BatchDetailResponse,
     ErrorResponse,
+    HTMLConvertRequest,
+    HTMLConvertResponse,
 )
 from app.auth import get_current_user
 from app.config import settings
@@ -362,3 +365,147 @@ async def get_credit_status(user: User = Depends(get_current_user)):
         "plan": user.plan.value,
         "unlimited": user.credits_remaining == -1,
     }
+
+
+# ── HTML to DOCX ────────────────────────────────────
+
+@router.post("/html", response_model=HTMLConvertResponse, status_code=status.HTTP_202_ACCEPTED)
+async def convert_html_to_docx(
+    data: HTMLConvertRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    conversion = Conversion(
+        user_id=user.id,
+        original_filename=f"{data.filename}.html",
+        original_size=len(data.html.encode("utf-8")),
+        status=ConversionStatus.PENDING,
+        file_path_pdf="",
+    )
+    db.add(conversion)
+    await db.commit()
+    await db.refresh(conversion)
+
+    # Save HTML to file
+    html_path = settings.UPLOAD_DIR / f"{conversion.id}_{uuid.uuid4().hex[:8]}.html"
+    html_path.write_text(data.html, encoding="utf-8")
+
+    output_filename = f"{data.filename}.docx"
+    output_path = settings.OUTPUT_DIR / output_filename
+
+    try:
+        import mammoth
+        from html import unescape
+
+        conversion.status = ConversionStatus.CONVERTING
+        conversion.status_message = "Convirtiendo HTML a Word..."
+        await db.commit()
+
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+
+        result = mammoth.convert_to_html(html_content)
+        html_from_mammoth = result.value
+
+        from docx import Document
+        from docx.shared import Pt, RGBColor
+        import re
+
+        doc = Document()
+        style = doc.styles["Normal"]
+        style.font.name = "Calibri"
+        style.font.size = Pt(11)
+
+        # Parse HTML blocks and add to docx
+        lines = html_from_mammoth.split("\n")
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Headers
+            if line.startswith("<h1"):
+                text = _strip_tags(line)
+                doc.add_heading(text, level=1)
+            elif line.startswith("<h2"):
+                text = _strip_tags(line)
+                doc.add_heading(text, level=2)
+            elif line.startswith("<h3"):
+                text = _strip_tags(line)
+                doc.add_heading(text, level=3)
+            elif line.startswith("<h4"):
+                text = _strip_tags(line)
+                doc.add_heading(text, level=4)
+            # Tables
+            elif line.startswith("<table"):
+                _add_html_table(doc, line)
+            # Lists
+            elif line.startswith("<li"):
+                text = _strip_tags(line)
+                doc.add_paragraph(text, style="List Bullet")
+            # Paragraphs
+            elif line.startswith("<p") or line.startswith("<div"):
+                text = _strip_tags(line)
+                if text.strip():
+                    doc.add_paragraph(text)
+            # Other block elements
+            elif line.startswith("<"):
+                text = _strip_tags(line)
+                if text.strip():
+                    doc.add_paragraph(text)
+
+        doc.save(str(output_path))
+
+        conversion.status = ConversionStatus.COMPLETED
+        conversion.status_message = "Conversión HTML a Word completada"
+        conversion.output_size = output_path.stat().st_size if output_path.exists() else 0
+        conversion.file_path_docx = str(output_path)
+        conversion.completed_at = datetime.utcnow()
+        await db.commit()
+
+        return HTMLConvertResponse(
+            id=conversion.id,
+            message="HTML convertido a Word exitosamente",
+            status=conversion.status,
+            original_filename=conversion.original_filename,
+        )
+
+    except Exception as e:
+        conversion.status = ConversionStatus.FAILED
+        conversion.status_message = str(e)
+        await db.commit()
+        raise HTTPException(status_code=500, detail=f"Error convirtiendo HTML: {str(e)}")
+
+
+def _strip_tags(html: str) -> str:
+    import re
+    clean = re.sub(r"<[^>]+>", "", html)
+    from html import unescape
+    return unescape(clean).strip()
+
+
+def _add_html_table(doc, html_table: str) -> None:
+    import re
+    from docx.shared import Pt
+
+    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html_table, re.DOTALL)
+    if not rows:
+        return
+
+    cols = 0
+    parsed_rows = []
+    for row_html in rows:
+        cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row_html, re.DOTALL)
+        parsed_rows.append([_strip_tags(c) for c in cells])
+        cols = max(cols, len(cells))
+
+    if cols == 0:
+        return
+
+    table = doc.add_table(rows=len(parsed_rows), cols=cols, style="Table Grid")
+    for i, row_data in enumerate(parsed_rows):
+        for j, cell_text in enumerate(row_data):
+            if j < cols:
+                table.cell(i, j).text = cell_text
+
+    doc.add_paragraph()
