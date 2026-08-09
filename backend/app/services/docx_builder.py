@@ -27,7 +27,22 @@ def convert_pdf_to_docx(pdf_path: str, docx_path: str) -> None:
     try:
         from pdf2docx import Converter
         cv = Converter(pdf_path)
-        cv.convert(docx_path)
+
+        settings = {
+            "ocr": 1,
+            "ignore_page_error": True,
+            "parse_lattice_table": True,
+            "parse_stream_table": True,
+            "clip_image_res_ratio": 4.0,
+            "list_not_table": True,
+            "connected_border_tolerance": 0.5,
+            "min_border_clearance": 2.0,
+            "float_image_ignorable_gap": 5.0,
+            "line_break_width_ratio": 0.5,
+            "new_paragraph_free_space_ratio": 0.85,
+        }
+
+        cv.convert(docx_path, **settings)
         cv.close()
         logger.info(f"pdf2docx converted {pdf_path} -> {docx_path}")
     except Exception as e:

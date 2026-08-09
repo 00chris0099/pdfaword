@@ -14,6 +14,42 @@ from app.services.translator import translate_docx
 logger = logging.getLogger("pdfforge.converter")
 
 
+def _append_footers_to_docx(docx_path: str, pdf_path: str) -> None:
+    """Extract footers from PDF and append to DOCX if missing."""
+    try:
+        import pymupdf
+        from docx import Document
+        from docx.shared import Pt, RGBColor
+
+        pdf_doc = pymupdf.open(pdf_path)
+        doc = Document(docx_path)
+
+        existing_text = "\n".join(p.text for p in doc.paragraphs)
+
+        for page_num in range(len(pdf_doc)):
+            page = pdf_doc[page_num]
+            page_height = page.rect.height
+
+            footer_area = pymupdf.Rect(0, page_height * 0.88, page.rect.width, page_height)
+            footer_text = page.get_text("text", clip=footer_area).strip()
+
+            if footer_text and footer_text not in existing_text:
+                for line in footer_text.split("\n"):
+                    if line.strip() and line.strip() not in existing_text:
+                        p = doc.add_paragraph()
+                        p.alignment = 1  # center
+                        run = p.add_run(line.strip())
+                        run.font.size = Pt(8)
+                        run.font.color.rgb = RGBColor(128, 128, 128)
+
+        doc.save(docx_path)
+        pdf_doc.close()
+        logger.info(f"Appended footers to {docx_path}")
+
+    except Exception as e:
+        logger.warning(f"Footer extraction failed: {e}")
+
+
 async def run_conversion(conversion_id: int, force_ocr: bool = False):
     start_time = time.time()
     async with async_session() as db:
@@ -46,7 +82,6 @@ async def run_conversion(conversion_id: int, force_ocr: bool = False):
             use_ocr = force_ocr or analysis["is_scanned"]
 
             if use_ocr:
-                # Scanned PDF → enhanced extraction with formatting
                 conversion.status = ConversionStatus.OCR_PROCESSING
                 conversion.status_message = "Extrayendo texto con OCR..."
                 conversion.ocr_used = True
@@ -58,7 +93,6 @@ async def run_conversion(conversion_id: int, force_ocr: bool = False):
                 await db.commit()
                 build_docx_from_blocks(blocks, str(output_path), pdf_path=str(pdf_path))
             else:
-                # Digital PDF → pdf2docx preserves layout perfectly
                 conversion.status = ConversionStatus.CONVERTING
                 conversion.status_message = "Convirtiendo PDF a Word (preservando formato)..."
                 conversion.ocr_used = False
@@ -66,6 +100,9 @@ async def run_conversion(conversion_id: int, force_ocr: bool = False):
 
                 logger.info(f"Conversion {conversion_id}: pdf2docx conversion")
                 convert_pdf_to_docx(str(pdf_path), str(output_path))
+
+                # Post-process: append missing footers
+                _append_footers_to_docx(str(output_path), str(pdf_path))
 
             # Step 3: Translation (optional)
             if conversion.translation_lang:
