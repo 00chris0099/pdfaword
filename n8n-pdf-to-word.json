@@ -20,10 +20,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$json.env.PDFFORGE_URL || 'http://localhost:8000'}}/api/auth/login",
+        "url": "https://aimachristian-pdf.ajcxjb.easypanel.host/api/auth/login",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\"email\": \"{{$env.PDFFORGE_EMAIL || 'admin@pdfforge.com'}}\", \"password\": \"{{$env.PDFFORGE_PASSWORD || 'admin123'}}\"}",
+        "jsonBody": "={\"email\": \"admin@pdfforge.com\", \"password\": \"admin123\"}",
         "options": {}
       },
       "id": "get-token",
@@ -63,7 +63,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{$env.PDFFORGE_URL || 'http://localhost:8000'}}/api/convert",
+        "url": "https://aimachristian-pdf.ajcxjb.easypanel.host/api/convert",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -125,7 +125,7 @@
     },
     {
       "parameters": {
-        "url": "={{$env.PDFFORGE_URL || 'http://localhost:8000'}}/api/convert/{{ $('Convert PDF to Word').item.json.conversion_id }}/download",
+        "url": "https://aimachristian-pdf.ajcxjb.easypanel.host/api/convert/{{ $('Convert PDF to Word').item.json.conversion_id }}/download",
         "options": {
           "response": {
             "response": {
