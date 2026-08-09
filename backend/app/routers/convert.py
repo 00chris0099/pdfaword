@@ -66,8 +66,8 @@ async def upload_and_convert(
     # Validate
     validate_pdf(file)
 
-    # Check credits
-    if user.credits_remaining <= 0:
+    # Check credits (-1 = unlimited)
+    if user.credits_remaining == 0:
         raise HTTPException(status_code=402, detail="Sin créditos disponibles. Actualiza tu plan.")
 
     # Create conversion record
