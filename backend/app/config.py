@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # JWT
     SECRET_KEY: str = "pdfforge-super-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 52560000  # 100 years
 
     # Database
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/pdfforge.db"
