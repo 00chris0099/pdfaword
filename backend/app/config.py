@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     ENTERPRISE_MAX_PAGES: int = -1  # unlimited
 
     # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    CORS_ORIGINS: list[str] = ["*"]
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
