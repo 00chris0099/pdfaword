@@ -8,7 +8,7 @@ from app.models import Conversion, ConversionStatus
 from app.config import settings
 from app.utils.pdf_analyzer import analyze_pdf
 from app.services.ocr_engine import ocr_engine
-from app.services.docx_builder import convert_pdf_to_docx
+from app.services.docx_builder import convert_pdf_to_docx, build_docx_from_blocks
 from app.services.translator import translate_docx
 
 logger = logging.getLogger("pdfforge.converter")
@@ -39,29 +39,22 @@ async def run_conversion(conversion_id: int, force_ocr: bool = False):
 
             logger.info(f"Conversion {conversion_id}: analyzed - {analysis}")
 
-            # Step 2: OCR or Direct conversion
+            # Step 2: Extract with rich formatting
             output_filename = pdf_path.stem + ".docx"
             output_path = settings.OUTPUT_DIR / output_filename
 
-            use_ocr = force_ocr or analysis["is_scanned"]
+            conversion.status = ConversionStatus.CONVERTING
+            conversion.status_message = "Extrayendo texto con formato..."
+            await db.commit()
 
-            if use_ocr:
-                conversion.status = ConversionStatus.OCR_PROCESSING
-                conversion.status_message = "Ejecutando OCR con PaddleOCR..."
-                conversion.ocr_used = True
-                await db.commit()
+            logger.info(f"Conversion {conversion_id}: rich extraction")
+            blocks = ocr_engine.process(str(pdf_path))
 
-                logger.info(f"Conversion {conversion_id}: running OCR")
-                ocr_blocks = ocr_engine.process(str(pdf_path))
-                from app.services.docx_builder import build_docx_from_ocr
-                build_docx_from_ocr(ocr_blocks, str(output_path))
-            else:
-                conversion.status = ConversionStatus.CONVERTING
-                conversion.status_message = "Convirtiendo PDF a Word..."
-                await db.commit()
+            conversion.ocr_used = not analysis["is_scanned"]
+            conversion.status_message = f"Construyendo Word ({len(blocks)} bloques)..."
+            await db.commit()
 
-                logger.info(f"Conversion {conversion_id}: direct conversion")
-                convert_pdf_to_docx(str(pdf_path), str(output_path))
+            build_docx_from_blocks(blocks, str(output_path), pdf_path=str(pdf_path))
 
             # Step 3: Translation (optional)
             if conversion.translation_lang:
