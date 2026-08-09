@@ -126,11 +126,6 @@ class HealthResponse(BaseModel):
 
 # ── HTML to DOCX ─────────────────────────────────────
 
-class HTMLConvertRequest(BaseModel):
-    html: str = Field(min_length=1)
-    filename: str = Field(default="documento")
-
-
 class HTMLConvertResponse(BaseModel):
     id: int
     message: str

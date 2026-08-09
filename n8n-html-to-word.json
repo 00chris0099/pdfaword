@@ -17,6 +17,16 @@
     },
     {
       "parameters": {
+        "jsCode": "const html = $input.first().json.html || $input.first().json.body?.html || $input.first().json.data || '';\nconst filename = $input.first().json.filename || $input.first().json.body?.filename || 'documento';\n\nif (!html) {\n  throw new Error('No se encontro campo \"html\" en el body del request');\n}\n\nconst htmlBuffer = Buffer.from(html, 'utf-8');\n\nreturn [{\n  json: { filename },\n  binary: {\n    file: {\n      data: htmlBuffer,\n      mimeType: 'text/html',\n      fileName: filename + '.html'\n    }\n  }\n}];"
+      },
+      "id": "2",
+      "name": "Preparar HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [250, 0]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "https://aimachristian-pdf.ajcxjb.easypanel.host/api/convert/html",
         "sendHeaders": true,
@@ -29,16 +39,13 @@
           ]
         },
         "sendBody": true,
-        "contentType": "json",
+        "contentType": "multipart-form-data",
         "bodyParameters": {
           "parameters": [
             {
-              "name": "html",
-              "value": "={{ $json.html || $json.body?.html || $json.data }}"
-            },
-            {
-              "name": "filename",
-              "value": "={{ $json.filename || $json.body?.filename || 'documento' }}"
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "file"
             }
           ]
         },
@@ -46,11 +53,22 @@
           "timeout": 300000
         }
       },
-      "id": "2",
+      "id": "3",
       "name": "Convert HTML",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [250, 0]
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "4",
+      "name": "Esperar",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [750, 0]
     },
     {
       "parameters": {
@@ -73,15 +91,26 @@
           "timeout": 300000
         }
       },
-      "id": "3",
+      "id": "5",
       "name": "Download Word",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [500, 0]
+      "position": [1000, 0]
     }
   ],
   "connections": {
     "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Preparar HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar HTML": {
       "main": [
         [
           {
@@ -93,6 +122,17 @@
       ]
     },
     "Convert HTML": {
+      "main": [
+        [
+          {
+            "node": "Esperar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar": {
       "main": [
         [
           {

@@ -19,7 +19,6 @@ from app.schemas import (
     BatchItemResponse,
     BatchDetailResponse,
     ErrorResponse,
-    HTMLConvertRequest,
     HTMLConvertResponse,
 )
 from app.auth import get_current_user
@@ -371,17 +370,19 @@ async def get_credit_status(user: User = Depends(get_current_user)):
 
 @router.post("/html", response_model=HTMLConvertResponse, status_code=status.HTTP_202_ACCEPTED)
 async def convert_html_to_docx(
-    data: HTMLConvertRequest,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    safe_filename = (data.filename or "documento")[:50]
+    html_content = (await file.read()).decode("utf-8")
+    safe_filename = Path(file.filename).stem[:50] if file.filename else "documento"
     safe_filename = "".join(c for c in safe_filename if c.isalnum() or c in "-_ ").strip() or "documento"
 
     conversion = Conversion(
         user_id=user.id,
         original_filename=f"{safe_filename}.html",
-        original_size=len(data.html.encode("utf-8")),
+        original_size=len(html_content.encode("utf-8")),
         status=ConversionStatus.PENDING,
         file_path_pdf="",
     )
@@ -389,95 +390,139 @@ async def convert_html_to_docx(
     await db.commit()
     await db.refresh(conversion)
 
-    # Save HTML to file
     html_path = settings.UPLOAD_DIR / f"{conversion.id}_{uuid.uuid4().hex[:8]}.html"
-    html_path.write_text(data.html, encoding="utf-8")
+    html_path.write_text(html_content, encoding="utf-8")
 
     output_filename = f"{safe_filename}.docx"
     output_path = settings.OUTPUT_DIR / output_filename
 
+    background_tasks.add_task(_process_html_to_docx, conversion.id, str(html_path), str(output_path), safe_filename)
+
+    return HTMLConvertResponse(
+        id=conversion.id,
+        message="HTML recibido. Convirtiendo a Word...",
+        status=conversion.status,
+        original_filename=conversion.original_filename,
+    )
+
+
+def _process_html_to_docx(conversion_id: int, html_path: str, docx_path: str, filename: str):
+    import time
+
+    start = time.time()
     try:
-        import mammoth
-        from html import unescape
-
-        conversion.status = ConversionStatus.CONVERTING
-        conversion.status_message = "Convirtiendo HTML a Word..."
-        await db.commit()
-
         with open(html_path, "r", encoding="utf-8") as f:
             html_content = f.read()
 
+        import mammoth
+
         result = mammoth.convert_to_html(html_content)
-        html_from_mammoth = result.value
+        html_output = result.value
+        messages = result.messages
 
-        from docx import Document
-        from docx.shared import Pt, RGBColor
-        import re
+        if not html_output or len(html_output.strip()) < 10:
+            raise ValueError("Mammoth no pudo convertir el HTML. Usando fallback.")
 
-        doc = Document()
-        style = doc.styles["Normal"]
-        style.font.name = "Calibri"
-        style.font.size = Pt(11)
+        html_bytes = html_output.encode("utf-8")
+        doc_result = mammoth.convert_to_docx(html_bytes)
+        docx_bytes = doc_result.value
 
-        # Parse HTML blocks and add to docx
-        lines = html_from_mammoth.split("\n")
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
+        with open(docx_path, "wb") as f:
+            f.write(docx_bytes)
 
-            # Headers
-            if line.startswith("<h1"):
-                text = _strip_tags(line)
-                doc.add_heading(text, level=1)
-            elif line.startswith("<h2"):
-                text = _strip_tags(line)
-                doc.add_heading(text, level=2)
-            elif line.startswith("<h3"):
-                text = _strip_tags(line)
-                doc.add_heading(text, level=3)
-            elif line.startswith("<h4"):
-                text = _strip_tags(line)
-                doc.add_heading(text, level=4)
-            # Tables
-            elif line.startswith("<table"):
-                _add_html_table(doc, line)
-            # Lists
-            elif line.startswith("<li"):
-                text = _strip_tags(line)
-                doc.add_paragraph(text, style="List Bullet")
-            # Paragraphs
-            elif line.startswith("<p") or line.startswith("<div"):
-                text = _strip_tags(line)
-                if text.strip():
-                    doc.add_paragraph(text)
-            # Other block elements
-            elif line.startswith("<"):
-                text = _strip_tags(line)
-                if text.strip():
-                    doc.add_paragraph(text)
-
-        doc.save(str(output_path))
-
-        conversion.status = ConversionStatus.COMPLETED
-        conversion.status_message = "Conversión HTML a Word completada"
-        conversion.output_size = output_path.stat().st_size if output_path.exists() else 0
-        conversion.file_path_docx = str(output_path)
-        conversion.completed_at = datetime.utcnow()
-        await db.commit()
-
-        return HTMLConvertResponse(
-            id=conversion.id,
-            message="HTML convertido a Word exitosamente",
-            status=conversion.status,
-            original_filename=conversion.original_filename,
-        )
+        elapsed = time.time() - start
+        import asyncio
+        asyncio.run(_update_conversion_done(conversion_id, docx_path, elapsed))
 
     except Exception as e:
-        conversion.status = ConversionStatus.FAILED
-        conversion.status_message = str(e)
-        await db.commit()
-        raise HTTPException(status_code=500, detail=f"Error convirtiendo HTML: {str(e)}")
+        try:
+            _fallback_html_to_docx(conversion_id, html_path, docx_path, start)
+        except Exception as fallback_error:
+            import asyncio
+            asyncio.run(_update_conversion_failed(conversion_id, f"Error: {e}. Fallback: {fallback_error}"))
+
+
+def _fallback_html_to_docx(conversion_id: int, html_path: str, docx_path: str, start_time: float):
+    import re
+    from docx import Document
+    from docx.shared import Pt
+
+    with open(html_path, "r", encoding="utf-8") as f:
+        html_content = f.read()
+
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(11)
+
+    html_content = re.sub(r"<style[^>]*>.*?</style>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
+    html_content = re.sub(r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
+
+    body_match = re.search(r"<body[^>]*>(.*?)</body>", html_content, re.DOTALL | re.IGNORECASE)
+    if body_match:
+        html_content = body_match.group(1)
+
+    table_pattern = re.compile(r"<table[^>]*>(.*?)</table>", re.DOTALL | re.IGNORECASE)
+    tables = table_pattern.findall(html_content)
+    for table_html in tables:
+        _add_html_table(doc, "<table>" + table_html + "</table>")
+        html_content = html_content.replace("<table>" + table_html + "</table>", "")
+
+    lines = re.split(r"\n|<br\s*/?>|</p>|</div>|</h[1-6]>", html_content)
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        clean = re.sub(r"<[^>]+>", "", line).strip()
+        if not clean:
+            continue
+        if re.match(r"<h[1-6]", line, re.IGNORECASE):
+            level = int(re.search(r"h(\d)", line, re.IGNORECASE).group(1))
+            doc.add_heading(clean, level=min(level, 4))
+        elif re.match(r"<li", line, re.IGNORECASE):
+            doc.add_paragraph(clean, style="List Bullet")
+        else:
+            doc.add_paragraph(clean)
+
+    doc.save(docx_path)
+
+    elapsed = time.time() - start_time
+    import asyncio
+    asyncio.run(_update_conversion_done(conversion_id, docx_path, elapsed))
+
+
+async def _update_conversion_done(conversion_id: int, docx_path: str, elapsed: float):
+    from app.database import async_session
+    from sqlalchemy import select
+    from app.models import Conversion, ConversionStatus
+    from pathlib import Path
+    from datetime import datetime
+
+    async with async_session() as db:
+        result = await db.execute(select(Conversion).where(Conversion.id == conversion_id))
+        conv = result.scalar_one_or_none()
+        if conv:
+            conv.status = ConversionStatus.COMPLETED
+            conv.status_message = "Conversión completada"
+            conv.output_size = Path(docx_path).stat().st_size if Path(docx_path).exists() else 0
+            conv.file_path_docx = docx_path
+            conv.conversion_time_seconds = round(elapsed, 2)
+            conv.completed_at = datetime.utcnow()
+            await db.commit()
+
+
+async def _update_conversion_failed(conversion_id: int, error: str):
+    from app.database import async_session
+    from sqlalchemy import select
+    from app.models import Conversion, ConversionStatus
+
+    async with async_session() as db:
+        result = await db.execute(select(Conversion).where(Conversion.id == conversion_id))
+        conv = result.scalar_one_or_none()
+        if conv:
+            conv.status = ConversionStatus.FAILED
+            conv.status_message = error
+            await db.commit()
 
 
 def _strip_tags(html: str) -> str:
@@ -489,7 +534,6 @@ def _strip_tags(html: str) -> str:
 
 def _add_html_table(doc, html_table: str) -> None:
     import re
-    from docx.shared import Pt
 
     rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html_table, re.DOTALL)
     if not rows:
