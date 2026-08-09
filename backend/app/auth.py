@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta
-import hashlib
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
@@ -10,22 +9,16 @@ from app.config import settings
 from app.database import get_db
 from app.models import User
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 security = HTTPBearer()
 
 
-def _truncate_password(password: str) -> str:
-    if len(password.encode("utf-8")) > 72:
-        return hashlib.sha256(password.encode()).hexdigest()
-    return password
-
-
 def hash_password(password: str) -> str:
-    return pwd_context.hash(_truncate_password(password))
+    return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(_truncate_password(plain_password), hashed_password)
+    return pwd_context.verify(plain_password, hashed_password)
 
 
 def create_access_token(user_id: int) -> str:
