@@ -39,22 +39,33 @@ async def run_conversion(conversion_id: int, force_ocr: bool = False):
 
             logger.info(f"Conversion {conversion_id}: analyzed - {analysis}")
 
-            # Step 2: Extract with rich formatting
+            # Step 2: Convert
             output_filename = pdf_path.stem + ".docx"
             output_path = settings.OUTPUT_DIR / output_filename
 
-            conversion.status = ConversionStatus.CONVERTING
-            conversion.status_message = "Extrayendo texto con formato..."
-            await db.commit()
+            use_ocr = force_ocr or analysis["is_scanned"]
 
-            logger.info(f"Conversion {conversion_id}: rich extraction")
-            blocks = ocr_engine.process(str(pdf_path))
+            if use_ocr:
+                # Scanned PDF → enhanced extraction with formatting
+                conversion.status = ConversionStatus.OCR_PROCESSING
+                conversion.status_message = "Extrayendo texto con OCR..."
+                conversion.ocr_used = True
+                await db.commit()
 
-            conversion.ocr_used = not analysis["is_scanned"]
-            conversion.status_message = f"Construyendo Word ({len(blocks)} bloques)..."
-            await db.commit()
+                logger.info(f"Conversion {conversion_id}: OCR extraction")
+                blocks = ocr_engine.process(str(pdf_path))
+                conversion.status_message = f"Construyendo Word ({len(blocks)} bloques)..."
+                await db.commit()
+                build_docx_from_blocks(blocks, str(output_path), pdf_path=str(pdf_path))
+            else:
+                # Digital PDF → pdf2docx preserves layout perfectly
+                conversion.status = ConversionStatus.CONVERTING
+                conversion.status_message = "Convirtiendo PDF a Word (preservando formato)..."
+                conversion.ocr_used = False
+                await db.commit()
 
-            build_docx_from_blocks(blocks, str(output_path), pdf_path=str(pdf_path))
+                logger.info(f"Conversion {conversion_id}: pdf2docx conversion")
+                convert_pdf_to_docx(str(pdf_path), str(output_path))
 
             # Step 3: Translation (optional)
             if conversion.translation_lang:
